@@ -1,0 +1,8 @@
+{
+  "name": "Copy of VibeStream",
+  "description": "A high-performance video sharing platform featuring AI-powered video analysis, content categorization, and local persistence for a seamless viewing experience.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
