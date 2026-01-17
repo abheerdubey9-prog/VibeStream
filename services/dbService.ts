@@ -1,22 +1,23 @@
 
-import { Video } from '../types';
+import { Video } from '../types.ts';
 
-// Initialize Gun.js with public relay peers
+// Initialize Gun.js with multiple public relay peers for better global reach
 // @ts-ignore
 const gun = Gun([
   'https://gun-manhattan.herokuapp.com/gun',
   'https://relay.peer.ooo/gun',
-  'https://peer.wallie.io/gun'
+  'https://peer.wallie.io/gun',
+  'https://gundb-relay.herokuapp.com/gun'
 ]);
 
-const videoNode = gun.get('vibestream-v3-global-videos');
+// Namespace for global discovery
+const videoNode = gun.get('vibestream-global-discovery-v4');
 
 export const saveVideoGlobally = (video: Video): Promise<void> => {
   return new Promise((resolve) => {
-    // We store metadata in Gun. Thumbnails are stored as Base64.
-    // Note: Gun is best for small-ish data. For high-res videos, we use URLs.
+    // Gun stores small data efficiently. Thumbnails are kept small (320px).
     videoNode.get(video.id).put(video, (ack: any) => {
-      if (ack.err) console.error("Gun Error:", ack.err);
+      if (ack.err) console.error("Gun Broadcast Error:", ack.err);
       resolve();
     });
   });
@@ -24,18 +25,9 @@ export const saveVideoGlobally = (video: Video): Promise<void> => {
 
 export const subscribeToVideos = (callback: (video: Video) => void) => {
   videoNode.map().on((data: any, id: string) => {
-    if (data && data.title) {
+    // Basic validation to ensure we only get valid video objects
+    if (data && data.title && typeof data.title === 'string') {
       callback({ ...data, id });
     }
   });
-};
-
-// Local storage backup for offline support
-export const saveLocal = (video: Video) => {
-  const local = JSON.parse(localStorage.getItem('vibe_local_videos') || '[]');
-  localStorage.setItem('vibe_local_videos', JSON.stringify([...local, video]));
-};
-
-export const getLocalVideos = (): Video[] => {
-  return JSON.parse(localStorage.getItem('vibe_local_videos') || '[]');
 };

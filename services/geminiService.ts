@@ -2,7 +2,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
 const getAIClient = () => {
-  return new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  // Safe access to API Key for local development
+  const apiKey = typeof process !== 'undefined' && process.env ? process.env.API_KEY : '';
+  return new GoogleGenAI({ apiKey: apiKey || '' });
 };
 
 export const generateVideoMetadata = async (imageBuffer: string) => {
@@ -21,7 +23,7 @@ export const generateVideoMetadata = async (imageBuffer: string) => {
               },
             },
             {
-              text: "Analyze this frame from a video and suggest a catchy title and a short description. Return only JSON.",
+              text: "Analyze this video frame. Provide a catchy YouTube-style title, a 2-sentence description, and a 1-word category (Music, Gaming, News, Learning, Creative). Return strictly JSON.",
             },
           ],
         },
@@ -42,11 +44,11 @@ export const generateVideoMetadata = async (imageBuffer: string) => {
 
     return JSON.parse(response.text || '{}');
   } catch (error) {
-    console.error("Gemini Error:", error);
+    console.error("AI Analysis failed:", error);
     return {
-      title: "Untitled Video",
-      description: "No description provided.",
-      category: "Uncategorized"
+      title: "Shared Global Clip",
+      description: "A community video shared via VibeStream P2P network.",
+      category: "Creative"
     };
   }
 };
