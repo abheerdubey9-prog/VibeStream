@@ -18,28 +18,24 @@ const App: React.FC = () => {
   const [publicUrl, setPublicUrl] = useState('');
   const [lastSyncedVideo, setLastSyncedVideo] = useState<string | null>(null);
   const [showNotification, setShowNotification] = useState(false);
+  const [videoError, setVideoError] = useState<boolean>(false);
 
   useEffect(() => {
-    // Subscribe to the decentralized P2P feed
     try {
       subscribeToVideos((video) => {
         if (video && video.id) {
           setGlobalVideos(prev => {
-            // Check if this is a NEW video from someone else
             if (!prev[video.id]) {
               setLastSyncedVideo(video.title);
               setShowNotification(true);
               setTimeout(() => setShowNotification(false), 5000);
             }
-            return {
-              ...prev,
-              [video.id]: video
-            };
+            return { ...prev, [video.id]: video };
           });
         }
       });
     } catch (e) {
-      console.error("Gun connection failed.");
+      console.error("P2P connection failed.");
     }
   }, []);
 
@@ -49,11 +45,12 @@ const App: React.FC = () => {
 
   const handleVideoSelect = (video: Video) => {
     setSelectedVideo(video);
+    setVideoError(false);
     setViewMode(ViewMode.WATCH);
     window.scrollTo(0, 0);
   };
 
-  const processVideoMetadata = async (videoUrl: string, fileName: string) => {
+  const processVideoMetadata = async (videoUrl: string, fileName: string, isLocal: boolean = false) => {
     setIsUploading(true);
     setUploadProgress(10);
     
@@ -86,7 +83,7 @@ const App: React.FC = () => {
       const newVideo: Video = {
         id: Math.random().toString(36).substr(2, 9),
         title: metadata.title || fileName,
-        description: metadata.description || 'A video shared by a community member.',
+        description: metadata.description || 'A community shared video.',
         url: videoUrl,
         thumbnail: thumbnailData,
         uploader: `User_${Math.floor(Math.random() * 9999)}`,
@@ -95,7 +92,8 @@ const App: React.FC = () => {
         duration: isFinite(videoElement.duration) 
             ? `${Math.floor(videoElement.duration / 60)}:${Math.floor(videoElement.duration % 60).toString().padStart(2, '0')}`
             : '0:00',
-        category: metadata.category?.toLowerCase() || 'uncategorized'
+        category: metadata.category?.toLowerCase() || 'uncategorized',
+        isLocal
       };
 
       await saveVideoGlobally(newVideo);
@@ -111,7 +109,7 @@ const App: React.FC = () => {
 
     } catch (err) {
       setIsUploading(false);
-      alert("Something went wrong. Please check your internet.");
+      alert("Processing failed. Please try a direct MP4 link.");
     }
   };
 
@@ -119,12 +117,12 @@ const App: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
-    processVideoMetadata(url, file.name);
+    processVideoMetadata(url, file.name, true);
   };
 
   const handleUrlSubmit = () => {
     if (!publicUrl) return;
-    processVideoMetadata(publicUrl, "External Video");
+    processVideoMetadata(publicUrl, "Shared Stream", false);
   };
 
   const filteredVideos = videosArray.filter(v => 
@@ -135,7 +133,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-white selection:bg-blue-500/30">
-      {/* Peer Sync Bar */}
       <div className="h-0.5 w-full fixed top-0 z-[60] overflow-hidden bg-transparent">
         <div className="h-full bg-blue-500 animate-[pulse_2s_infinite] shadow-[0_0_8px_rgba(59,130,246,0.8)]"></div>
       </div>
@@ -150,7 +147,7 @@ const App: React.FC = () => {
             <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
               <i className="fa-solid fa-globe text-white text-xs"></i>
             </div>
-            <span className="text-xl font-bold tracking-tighter hidden sm:block">VibeStream <span className="text-[10px] bg-blue-600 px-1 rounded ml-1 font-black">GLOBAL</span></span>
+            <span className="text-xl font-bold tracking-tighter hidden sm:block">VibeStream <span className="text-[10px] bg-blue-600 px-1 rounded ml-1 font-black uppercase">P2P</span></span>
           </div>
         </div>
 
@@ -158,14 +155,11 @@ const App: React.FC = () => {
           <div className="flex items-center bg-[#121212] border border-white/10 rounded-full overflow-hidden focus-within:border-blue-500 transition-all">
             <input 
               type="text" 
-              placeholder="Search global community..." 
+              placeholder="Search synced videos..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-transparent px-5 py-2 outline-none text-sm placeholder:text-gray-500"
             />
-            <button className="bg-white/5 border-l border-white/10 px-5 py-2 hover:bg-white/10">
-              <i className="fa-solid fa-magnifying-glass text-sm text-gray-400"></i>
-            </button>
           </div>
         </div>
 
@@ -174,25 +168,20 @@ const App: React.FC = () => {
             onClick={() => setShowUrlModal(true)}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-full text-sm font-bold transition-all shadow-lg shadow-blue-600/20"
           >
-            <i className="fa-solid fa-cloud-arrow-up"></i>
+            <i className="fa-solid fa-plus"></i>
             <span className="hidden sm:inline">Share</span>
           </button>
-          <div className="flex items-center gap-1.5 px-3 py-1 bg-green-500/10 rounded-full border border-green-500/20">
-            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-[10px] font-bold text-green-500 uppercase tracking-tighter hidden lg:block">Synced</span>
-          </div>
         </div>
       </nav>
 
-      {/* Sync Notification Toast */}
       {showNotification && (
         <div className="fixed bottom-6 left-6 z-[200] bg-[#1a1a1a] border border-blue-500/30 p-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-left-10 duration-500 max-w-xs">
-          <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0 animate-pulse">
+          <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
             <i className="fa-solid fa-satellite-dish text-white text-sm"></i>
           </div>
           <div className="overflow-hidden">
-            <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-0.5">Live Sync</p>
-            <p className="text-xs font-bold text-gray-200 line-clamp-1">{lastSyncedVideo} just added to feed!</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-0.5">Network Update</p>
+            <p className="text-xs font-bold text-gray-200 line-clamp-1">{lastSyncedVideo} shared!</p>
           </div>
         </div>
       )}
@@ -201,23 +190,16 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="bg-[#181818] w-full max-w-md rounded-3xl p-8 border border-white/10 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-black">Share with World</h2>
-              <button onClick={() => setShowUrlModal(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors"><i className="fa-solid fa-xmark"></i></button>
+              <h2 className="text-2xl font-black">Share with Network</h2>
+              <button onClick={() => setShowUrlModal(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center"><i className="fa-solid fa-xmark"></i></button>
             </div>
             
-            <div className="bg-blue-600/10 border border-blue-500/20 rounded-2xl p-4 mb-8 flex gap-3 items-start">
-              <i className="fa-solid fa-circle-info text-blue-500 mt-0.5"></i>
-              <p className="text-[11px] text-blue-300 leading-relaxed">
-                <strong>Tip:</strong> If you use a <strong>Link (URL)</strong>, everyone in the world can play your video. If you pick a <strong>Local File</strong>, others see the thumbnail but can't play the file unless they have it too.
-              </p>
-            </div>
-
             <div className="space-y-6">
               <div>
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Global Link (Best for Sharing)</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Option A: Link (Visible to All)</label>
                 <input 
                   type="text" 
-                  placeholder="https://example.com/movie.mp4"
+                  placeholder="https://.../video.mp4"
                   className="w-full bg-[#0f0f0f] border border-white/10 rounded-2xl px-5 py-4 outline-none focus:border-blue-500 transition-all text-sm"
                   value={publicUrl}
                   onChange={(e) => setPublicUrl(e.target.value)}
@@ -229,10 +211,10 @@ const App: React.FC = () => {
                 <div className="flex-1 h-px bg-white/5"></div>
               </div>
               <div>
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Personal File (Private playback)</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Option B: Local File (Preview Only)</label>
                 <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/5 rounded-2xl cursor-pointer hover:bg-white/5 transition-all group">
                    <i className="fa-solid fa-film text-3xl mb-3 text-gray-600 group-hover:text-blue-500 transition-colors"></i>
-                   <p className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Pick MP4 File</p>
+                   <p className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Choose MP4</p>
                    <input type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
                 </label>
               </div>
@@ -252,15 +234,14 @@ const App: React.FC = () => {
         {viewMode === ViewMode.FEED && <Sidebar activeCategory={activeCategory} onCategorySelect={setActiveCategory} />}
         <main className={`flex-1 ${viewMode === ViewMode.FEED ? 'lg:ml-64 p-4 lg:p-8' : 'w-full'}`}>
           {isUploading && (
-            <div className="fixed bottom-8 right-8 z-[110] bg-[#1a1a1a] border border-white/10 p-5 rounded-2xl shadow-2xl w-80 animate-in slide-in-from-right-10 duration-500">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-black uppercase tracking-widest text-blue-500">Globalizing...</span>
+            <div className="fixed bottom-8 right-8 z-[110] bg-[#1a1a1a] border border-white/10 p-5 rounded-2xl shadow-2xl w-80">
+              <div className="flex items-center justify-between mb-3 text-blue-500">
+                <span className="text-xs font-black uppercase tracking-widest">AI Categorization...</span>
                 <span className="text-xs font-bold">{uploadProgress}%</span>
               </div>
               <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
                 <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
               </div>
-              <p className="text-[10px] text-gray-500 mt-3 italic leading-relaxed">Broadcast to P2P peers...</p>
             </div>
           )}
 
@@ -268,57 +249,77 @@ const App: React.FC = () => {
             <div className="max-w-[2000px] mx-auto">
               <div className="flex gap-2 overflow-x-auto pb-8 scrollbar-hide">
                 {['All', 'Music', 'Gaming', 'News', 'Learning', 'Creative'].map((cat) => (
-                  <button 
-                    key={cat}
-                    onClick={() => setActiveCategory(cat.toLowerCase())}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-                      activeCategory === cat.toLowerCase() ? 'bg-white text-black' : 'bg-white/5 hover:bg-white/10'
-                    }`}
-                  >
+                  <button key={cat} onClick={() => setActiveCategory(cat.toLowerCase())} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${activeCategory === cat.toLowerCase() ? 'bg-white text-black' : 'bg-white/5 hover:bg-white/10'}`}>
                     {cat}
                   </button>
                 ))}
               </div>
-
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-x-5 gap-y-12">
                 {filteredVideos.map(video => <VideoCard key={video.id} video={video} onClick={handleVideoSelect} />)}
               </div>
-              
               {filteredVideos.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-48 text-center animate-in fade-in duration-1000">
-                  <div className="w-24 h-24 bg-blue-600/5 rounded-full flex items-center justify-center mb-6">
-                    <i className="fa-solid fa-satellite text-4xl text-blue-500/30 animate-pulse"></i>
-                  </div>
-                  <h2 className="text-2xl font-black mb-3 text-blue-500/80">Listening for Peers</h2>
-                  <p className="text-gray-500 max-w-sm text-sm">The network is live. Once someone shares a video anywhere in the world, it will appear here in real-time.</p>
+                <div className="flex flex-col items-center justify-center py-48 text-center animate-in fade-in duration-700">
+                  <i className="fa-solid fa-satellite text-4xl text-white/20 mb-6"></i>
+                  <h2 className="text-2xl font-black mb-2">Network is Quiet</h2>
+                  <p className="text-gray-500 max-w-sm text-sm">Waiting for decentralized peers to broadcast video signals.</p>
                 </div>
               )}
             </div>
           ) : (
-            <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-8 p-0 lg:p-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
+            <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-8 p-0 lg:p-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
               <div className="flex-1">
-                <div className="aspect-video bg-black rounded-none lg:rounded-3xl overflow-hidden shadow-2xl ring-1 ring-white/5">
-                  <video key={selectedVideo?.url} src={selectedVideo?.url} controls autoPlay className="w-full h-full" />
+                <div className="aspect-video bg-black relative rounded-none lg:rounded-3xl overflow-hidden shadow-2xl group">
+                  {videoError ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-[#1a1a1a]">
+                      <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mb-6">
+                        <i className="fa-solid fa-circle-exclamation text-3xl text-red-500"></i>
+                      </div>
+                      <h3 className="text-xl font-black mb-3 text-white">Video Source Unavailable</h3>
+                      <p className="text-gray-400 text-sm max-w-md leading-relaxed">
+                        {selectedVideo?.isLocal 
+                          ? "This video was shared as a 'Local File' from another device. For security, browsers don't allow sharing local files directly. Try sharing using a direct 'Global Link' (URL) instead."
+                          : "The video link could not be loaded. It might be private, blocked, or not a direct MP4 file."}
+                      </p>
+                      <button 
+                        onClick={() => { setViewMode(ViewMode.FEED); setSelectedVideo(null); }}
+                        className="mt-8 px-6 py-2.5 bg-white text-black text-xs font-black rounded-full hover:bg-gray-200"
+                      >
+                        BACK TO FEED
+                      </button>
+                    </div>
+                  ) : (
+                    <video 
+                      key={selectedVideo?.url} 
+                      src={selectedVideo?.url} 
+                      controls 
+                      autoPlay 
+                      playsInline
+                      className="w-full h-full" 
+                      onError={() => setVideoError(true)}
+                    />
+                  )}
+                  {selectedVideo?.isLocal && !videoError && (
+                    <div className="absolute top-4 left-4 bg-orange-600/90 text-[10px] font-black px-2 py-1 rounded shadow-lg backdrop-blur-sm">
+                      SESSION LOCAL PREVIEW
+                    </div>
+                  )}
                 </div>
                 <div className="mt-6 px-4 lg:px-0">
                   <h1 className="text-2xl lg:text-3xl font-black mb-4 leading-tight">{selectedVideo?.title}</h1>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8">
                     <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 p-0.5 shadow-lg shadow-blue-500/20">
-                        <div className="w-full h-full rounded-full bg-[#0f0f0f] overflow-hidden">
-                          <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedVideo?.uploader}`} alt="avatar" />
-                        </div>
+                      <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden">
+                        <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedVideo?.uploader}`} alt="avatar" />
                       </div>
                       <div>
                         <h4 className="font-black text-base">{selectedVideo?.uploader}</h4>
-                        <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest">Global P2P Peer</p>
+                        <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest">P2P Broadcaster</p>
                       </div>
-                      <button className="ml-4 px-6 py-2.5 bg-white text-black text-xs font-black rounded-full hover:bg-gray-200 transition-transform active:scale-95">FOLLOW</button>
                     </div>
                   </div>
-                  <div className="bg-white/5 rounded-3xl p-6 mb-12 text-sm border border-white/5">
-                    <div className="flex gap-4 font-bold mb-3 text-gray-400">
-                      <span>Live Discovery Mode</span>
+                  <div className="bg-white/5 rounded-3xl p-6 mb-12 border border-white/5">
+                    <div className="flex gap-4 font-bold mb-3 text-gray-500 text-xs">
+                      <span>Live Sync Mode</span>
                       <span>Shared {new Date(selectedVideo?.createdAt || 0).toLocaleDateString()}</span>
                     </div>
                     <p className="text-gray-300 leading-relaxed font-medium">{selectedVideo?.description}</p>
@@ -326,7 +327,7 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div className="w-full lg:w-[420px] flex flex-col gap-5 px-4 lg:px-0">
-                <h3 className="font-black text-[10px] text-blue-500 uppercase tracking-[0.2em] px-1">Network Activity</h3>
+                <h3 className="font-black text-[10px] text-blue-500 uppercase tracking-widest px-1">Global Activity</h3>
                 {videosArray.filter(v => v.id !== selectedVideo?.id).slice(0, 12).map(video => (
                   <div key={video.id} className="flex gap-3 group cursor-pointer" onClick={() => handleVideoSelect(video)}>
                     <div className="relative w-44 h-24 flex-shrink-0 bg-[#1a1a1a] rounded-2xl overflow-hidden shadow-xl ring-1 ring-white/5">

@@ -10,6 +10,7 @@ export interface Video {
   createdAt: number;
   duration: string;
   category: string;
+  isLocal?: boolean; // Flag for blob: URLs
 }
 
 export interface User {
