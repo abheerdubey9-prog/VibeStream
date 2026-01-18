@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Video, ViewMode } from './types';
+import { Video, ViewMode, User } from './types';
 import { saveVideoGlobally, subscribeToVideos, removeVideoGlobally } from './services/dbService';
 import { generateVideoMetadata } from './services/geminiService';
 import { storeLocalVideo, getLocalVideo, removeLocalVideo } from './services/storageService';
@@ -8,7 +8,10 @@ import Sidebar from './components/Sidebar';
 import VideoCard from './components/VideoCard';
 
 const App: React.FC = () => {
-  const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.FEED);
+  const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.AUTH);
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  
   const [globalVideos, setGlobalVideos] = useState<Record<string, Video>>({});
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -23,12 +26,22 @@ const App: React.FC = () => {
   const [showDetails, setShowDetails] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Subscribe to P2P network updates and manage local persistence
+  // Check for existing session on load
   useEffect(() => {
+    const savedUser = localStorage.getItem('vibestream_user');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+      setViewMode(ViewMode.FEED);
+    }
+  }, []);
+
+  // Subscribe to P2P network updates
+  useEffect(() => {
+    if (viewMode === ViewMode.AUTH) return;
+
     try {
       subscribeToVideos(async (video, id) => {
         if (video === null) {
-          // Video was deleted from network
           setGlobalVideos(prev => {
             const next = { ...prev };
             delete next[id];
@@ -41,8 +54,6 @@ const App: React.FC = () => {
           await removeLocalVideo(id);
         } else {
           let processedVideo = { ...video };
-          
-          // Rehydration Logic: If it's a local video, try to restore blob from IndexedDB
           if (video.isLocal) {
             const localFile = await getLocalVideo(id);
             if (localFile) {
@@ -61,9 +72,32 @@ const App: React.FC = () => {
         }
       });
     } catch (e) {
-      console.warn("P2P synchronization layer experienced an issue.");
+      console.warn("P2P synchronization layer error.");
     }
-  }, [selectedVideo?.id]);
+  }, [viewMode, selectedVideo?.id]);
+
+  const handleGoogleSignIn = () => {
+    setIsAuthenticating(true);
+    // Simulate Google OAuth flow
+    setTimeout(() => {
+      const mockUser: User = {
+        id: Math.random().toString(36).substr(2, 9),
+        name: `Vibe User ${Math.floor(Math.random() * 1000)}`,
+        email: `user${Math.floor(Math.random() * 1000)}@gmail.com`,
+        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${Math.random()}`
+      };
+      localStorage.setItem('vibestream_user', JSON.stringify(mockUser));
+      setUser(mockUser);
+      setIsAuthenticating(false);
+      setViewMode(ViewMode.FEED);
+    }, 1500);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('vibestream_user');
+    setUser(null);
+    setViewMode(ViewMode.AUTH);
+  };
 
   const videosArray = useMemo(() => {
     const videos = Object.values(globalVideos) as Video[];
@@ -79,7 +113,7 @@ const App: React.FC = () => {
   };
 
   const handleUninstall = async (id: string) => {
-    if (!confirm("Are you sure you want to uninstall this video from the network and your local storage?")) return;
+    if (!confirm("Remove this broadcast from the network?")) return;
     setIsDeleting(true);
     try {
       await removeVideoGlobally(id);
@@ -91,13 +125,12 @@ const App: React.FC = () => {
   };
 
   const processVideoMetadata = async (videoUrl: string, fileName: string, fileBlob?: Blob) => {
+    if (!user) return;
     setIsUploading(true);
     setUploadProgress(10);
     
     try {
       const videoId = Math.random().toString(36).substr(2, 9);
-      
-      // If we have a file, store it permanently in IndexedDB
       if (fileBlob) {
         await storeLocalVideo(videoId, fileBlob);
       }
@@ -119,7 +152,6 @@ const App: React.FC = () => {
         setTimeout(() => resolve({ resolution: '1080p', duration: '0:00' }), 4000);
       });
 
-      // Capture frame for AI analysis
       setUploadProgress(30);
       videoElement.currentTime = Math.min(1, videoElement.duration || 0);
       await new Promise(r => setTimeout(r, 500));
@@ -141,7 +173,7 @@ const App: React.FC = () => {
         description: metadata.description || 'A community shared video.',
         url: videoUrl,
         thumbnail: thumbnailData,
-        uploader: `User_${Math.floor(Math.random() * 9999)}`,
+        uploader: user.name,
         views: 0,
         createdAt: Date.now(),
         duration: videoInfo.duration,
@@ -165,7 +197,7 @@ const App: React.FC = () => {
     } catch (err) {
       setIsUploading(false);
       console.error(err);
-      alert("Something went wrong during video processing.");
+      alert("Video processing failed.");
     }
   };
 
@@ -186,6 +218,55 @@ const App: React.FC = () => {
     (v.title?.toLowerCase().includes(searchQuery.toLowerCase()) || 
      v.description?.toLowerCase().includes(searchQuery.toLowerCase()))
   );
+
+  if (viewMode === ViewMode.AUTH) {
+    return (
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 relative overflow-hidden">
+        {/* Background blobs for aesthetics */}
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/20 blur-[120px] rounded-full"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-600/20 blur-[120px] rounded-full"></div>
+
+        <div className="w-full max-w-md z-10 animate-in fade-in zoom-in duration-700">
+          <div className="bg-[#121212]/80 backdrop-blur-xl border border-white/5 rounded-[40px] p-10 shadow-2xl text-center">
+            <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-blue-500/20 mx-auto mb-8">
+              <i className="fa-solid fa-globe text-white text-3xl"></i>
+            </div>
+            
+            <h1 className="text-4xl font-black tracking-tight mb-3">VibeStream</h1>
+            <p className="text-gray-400 text-sm font-medium mb-10 leading-relaxed">
+              The world's first serverless, peer-to-peer video discovery network. Secure, decentralized, and community-driven.
+            </p>
+
+            <button 
+              onClick={handleGoogleSignIn}
+              disabled={isAuthenticating}
+              className="w-full bg-white text-black h-14 rounded-2xl font-bold flex items-center justify-center gap-4 hover:bg-gray-100 transition-all active:scale-[0.98] disabled:opacity-50"
+            >
+              {isAuthenticating ? (
+                <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin"></div>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" viewBox="0 0 48 48">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                    <path fill="#4285F4" d="M46.64 24.55c0-1.65-.15-3.23-.42-4.75H24v9.03h12.73c-.55 2.85-2.15 5.27-4.57 6.91l7.14 5.53c4.18-3.85 6.64-9.53 6.64-15.72z"/>
+                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.14-5.53c-2.1.84-4.71 1.34-8.75 1.34-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                  </svg>
+                  Sign in with Google
+                </>
+              )}
+            </button>
+
+            <div className="mt-8 pt-8 border-t border-white/5">
+              <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">
+                Protected by Peer-to-Peer Encryption
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-white selection:bg-blue-500/30">
@@ -223,6 +304,19 @@ const App: React.FC = () => {
             <i className="fa-solid fa-cloud-arrow-up"></i>
             <span className="hidden sm:inline">Broadcast</span>
           </button>
+          
+          <div className="flex items-center gap-3 pl-2 border-l border-white/5 ml-2">
+            <div className="w-8 h-8 rounded-full bg-white/5 overflow-hidden ring-1 ring-white/10">
+              <img src={user?.avatar} alt="user avatar" />
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="p-2 text-gray-500 hover:text-white transition-colors"
+              title="Logout"
+            >
+              <i className="fa-solid fa-right-from-bracket"></i>
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -269,7 +363,6 @@ const App: React.FC = () => {
                    <p className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Select MP4 Video</p>
                    <input type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
                 </label>
-                <p className="text-[10px] text-gray-600 mt-3 italic">* File uploads are persisted in your browser's local storage for seamless playback across refreshes.</p>
               </div>
               <button 
                 onClick={handleUrlSubmit}
@@ -320,8 +413,7 @@ const App: React.FC = () => {
               {filteredVideos.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-48 text-center animate-in fade-in duration-700">
                   <i className="fa-solid fa-satellite-dish text-4xl text-white/20 mb-6 animate-pulse"></i>
-                  <h2 className="text-2xl font-black mb-2">Syncing with Network...</h2>
-                  <p className="text-gray-500 max-w-sm text-sm">Searching for peer-to-peer broadcasts on the global mesh network.</p>
+                  <h2 className="text-2xl font-black mb-2">Syncing Mesh...</h2>
                 </div>
               )}
             </div>
@@ -335,9 +427,6 @@ const App: React.FC = () => {
                         <i className="fa-solid fa-circle-exclamation text-3xl text-red-500"></i>
                       </div>
                       <h3 className="text-xl font-black mb-3">Broadcast Unavailable</h3>
-                      <p className="text-gray-400 text-sm max-w-md leading-relaxed">
-                        The peer node hosting this content is currently offline or the source link has expired. Local mesh broadcasts require the uploader to be active.
-                      </p>
                       <button 
                         onClick={() => { setViewMode(ViewMode.FEED); setSelectedVideo(null); }}
                         className="mt-8 px-6 py-2.5 bg-white text-black text-xs font-black rounded-full hover:bg-gray-200"
@@ -379,38 +468,12 @@ const App: React.FC = () => {
                   </div>
                   
                   <div className="bg-white/5 rounded-3xl p-6 border border-white/5">
-                    <div className="flex gap-4 font-bold mb-3 text-gray-500 text-[10px] uppercase tracking-widest">
-                      <span>{selectedVideo?.isLocal ? 'Mesh Node' : 'Global Source'}</span>
-                      <span>Shared {new Date(selectedVideo?.createdAt || 0).toLocaleDateString()}</span>
-                    </div>
                     <p className="text-gray-300 leading-relaxed font-medium">{selectedVideo?.description}</p>
-                  </div>
-
-                  <div className="mt-4 bg-[#1a1a1a] border border-white/5 rounded-3xl overflow-hidden">
-                    <button 
-                      onClick={() => setShowDetails(!showDetails)}
-                      className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition-colors"
-                    >
-                      <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Technical Specs</span>
-                      <i className={`fa-solid fa-chevron-down transition-transform duration-300 ${showDetails ? 'rotate-180' : ''}`}></i>
-                    </button>
-                    {showDetails && (
-                      <div className="p-6 pt-0 grid grid-cols-2 gap-4 border-t border-white/5 animate-in slide-in-from-top-2 duration-200">
-                        <div className="space-y-1">
-                          <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Resolution</p>
-                          <p className="text-sm font-bold">{selectedVideo?.resolution || 'Unknown'}</p>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Codec</p>
-                          <p className="text-sm font-bold">{selectedVideo?.codec || 'MP4'}</p>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
               <div className="w-full lg:w-[420px] flex flex-col gap-5 px-4 lg:px-0">
-                <h3 className="font-black text-[10px] text-blue-500 uppercase tracking-widest px-1">Discover Mesh</h3>
+                <h3 className="font-black text-[10px] text-blue-500 uppercase tracking-widest px-1">Up Next</h3>
                 {videosArray.filter(v => v.id !== selectedVideo?.id).slice(0, 10).map(video => (
                   <div key={video.id} className="flex gap-3 group cursor-pointer" onClick={() => handleVideoSelect(video)}>
                     <div className="relative w-44 h-24 flex-shrink-0 bg-[#1a1a1a] rounded-2xl overflow-hidden shadow-xl ring-1 ring-white/5">

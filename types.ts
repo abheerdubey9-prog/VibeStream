@@ -19,9 +19,11 @@ export interface User {
   id: string;
   name: string;
   avatar: string;
+  email?: string;
 }
 
 export enum ViewMode {
+  AUTH = 'AUTH',
   FEED = 'FEED',
   WATCH = 'WATCH',
   UPLOAD = 'UPLOAD'
