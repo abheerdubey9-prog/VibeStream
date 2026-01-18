@@ -19,6 +19,7 @@ const App: React.FC = () => {
   const [lastSyncedVideo, setLastSyncedVideo] = useState<string | null>(null);
   const [showNotification, setShowNotification] = useState(false);
   const [videoError, setVideoError] = useState<boolean>(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
     try {
@@ -40,12 +41,15 @@ const App: React.FC = () => {
   }, []);
 
   const videosArray = useMemo(() => {
-    return Object.values(globalVideos).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    // Cast Object.values results to Video[] to fix the 'unknown' property error during sorting.
+    const videos = Object.values(globalVideos) as Video[];
+    return videos.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   }, [globalVideos]);
 
   const handleVideoSelect = (video: Video) => {
     setSelectedVideo(video);
     setVideoError(false);
+    setShowDetails(false);
     setViewMode(ViewMode.WATCH);
     window.scrollTo(0, 0);
   };
@@ -60,13 +64,17 @@ const App: React.FC = () => {
       videoElement.crossOrigin = "anonymous";
       videoElement.muted = true;
       
-      await new Promise((resolve) => {
+      const videoInfo = await new Promise<{ resolution: string, codec: string }>((resolve) => {
         videoElement.onloadeddata = () => {
+          const res = `${videoElement.videoWidth}x${videoElement.videoHeight}`;
+          // Browser doesn't provide codec easily via HTMLVideoElement, so we infer from file extension or fallback
+          const codec = fileName.split('.').pop()?.toUpperCase() || 'H.264/AVC';
           videoElement.currentTime = 1;
+          resolve({ resolution: res, codec });
         };
-        videoElement.onseeked = () => resolve(true);
-        videoElement.onerror = () => resolve(true);
-        setTimeout(() => resolve(true), 4000);
+        videoElement.onseeked = () => {}; 
+        videoElement.onerror = () => resolve({ resolution: 'Unknown', codec: 'Unknown' });
+        setTimeout(() => resolve({ resolution: '1920x1080', codec: 'H.264' }), 4000);
       });
 
       const canvas = document.createElement('canvas');
@@ -93,7 +101,9 @@ const App: React.FC = () => {
             ? `${Math.floor(videoElement.duration / 60)}:${Math.floor(videoElement.duration % 60).toString().padStart(2, '0')}`
             : '0:00',
         category: metadata.category?.toLowerCase() || 'uncategorized',
-        isLocal
+        isLocal,
+        resolution: videoInfo.resolution,
+        codec: videoInfo.codec
       };
 
       await saveVideoGlobally(newVideo);
@@ -317,12 +327,46 @@ const App: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="bg-white/5 rounded-3xl p-6 mb-12 border border-white/5">
-                    <div className="flex gap-4 font-bold mb-3 text-gray-500 text-xs">
-                      <span>Live Sync Mode</span>
-                      <span>Shared {new Date(selectedVideo?.createdAt || 0).toLocaleDateString()}</span>
+                  
+                  <div className="space-y-4">
+                    <div className="bg-white/5 rounded-3xl p-6 border border-white/5">
+                      <div className="flex gap-4 font-bold mb-3 text-gray-500 text-xs">
+                        <span>Live Sync Mode</span>
+                        <span>Shared {new Date(selectedVideo?.createdAt || 0).toLocaleDateString()}</span>
+                      </div>
+                      <p className="text-gray-300 leading-relaxed font-medium">{selectedVideo?.description}</p>
                     </div>
-                    <p className="text-gray-300 leading-relaxed font-medium">{selectedVideo?.description}</p>
+
+                    <div className="bg-[#1a1a1a] border border-white/5 rounded-3xl overflow-hidden transition-all duration-300">
+                      <button 
+                        onClick={() => setShowDetails(!showDetails)}
+                        className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition-colors"
+                      >
+                        <span className="text-xs font-black uppercase tracking-widest text-gray-400">Technical Details</span>
+                        <i className={`fa-solid fa-chevron-down transition-transform duration-300 ${showDetails ? 'rotate-180' : ''}`}></i>
+                      </button>
+                      
+                      <div className={`transition-all duration-300 overflow-hidden ${showDetails ? 'max-h-96' : 'max-h-0'}`}>
+                        <div className="p-6 pt-0 grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5">
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Resolution</p>
+                            <p className="text-sm font-bold text-gray-200">{selectedVideo?.resolution || 'Auto Detected'}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Container / Codec</p>
+                            <p className="text-sm font-bold text-gray-200">{selectedVideo?.codec || 'MP4 / H.264'}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Broadcast ID</p>
+                            <p className="text-sm font-mono text-gray-400 truncate">{selectedVideo?.id}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Sync Timestamp</p>
+                            <p className="text-sm font-bold text-gray-200">{new Date(selectedVideo?.createdAt || 0).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

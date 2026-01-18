@@ -11,6 +11,8 @@ export interface Video {
   duration: string;
   category: string;
   isLocal?: boolean; // Flag for blob: URLs
+  resolution?: string;
+  codec?: string;
 }
 
 export interface User {
