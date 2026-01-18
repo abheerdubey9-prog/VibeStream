@@ -7,6 +7,9 @@
     <title>VibeStream - Global P2P Video Sharing</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Shaka Player for Adaptive Bitrate Streaming -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.5/shaka-player.compiled.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.5/controls.min.css">
     <!-- Gun.js for P2P Global Sync -->
     <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
     <script>
@@ -23,7 +26,6 @@
         margin: 0;
         overflow-x: hidden;
       }
-      /* Fallback for blank screen while React mounts */
       #root:empty::after {
         content: "Initializing VibeStream Network...";
         display: flex;
@@ -53,6 +55,23 @@
       .scrollbar-hide {
         -ms-overflow-style: none;
         scrollbar-width: none;
+      }
+
+      /* Custom Shaka Controls Overrides */
+      .shaka-video-container {
+        width: 100%;
+        height: 100%;
+      }
+      .shaka-controls-container {
+        background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%);
+      }
+      .shaka-range-element {
+        accent-color: #2563eb;
+      }
+      .shaka-overflow-menu, .shaka-settings-menu {
+        background: #181818 !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        border-radius: 12px !important;
       }
     </style>
     <script type="importmap">

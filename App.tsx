@@ -6,6 +6,7 @@ import { generateVideoMetadata } from './services/geminiService';
 import { storeLocalVideo, getLocalVideo, removeLocalVideo } from './services/storageService';
 import Sidebar from './components/Sidebar';
 import VideoCard from './components/VideoCard';
+import VideoPlayer from './components/VideoPlayer';
 
 const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.AUTH);
@@ -256,7 +257,7 @@ const App: React.FC = () => {
             
             <h1 className="text-4xl font-black tracking-tight mb-3">VibeStream</h1>
             <p className="text-gray-400 text-sm font-medium mb-10 leading-relaxed">
-              The world's first serverless, peer-to-peer video discovery network. Secure, decentralized, and community-driven.
+              Decentralized video discovery with adaptive mesh streaming.
             </p>
 
             <button 
@@ -531,15 +532,13 @@ const App: React.FC = () => {
                       </button>
                     </div>
                   ) : (
-                    <video 
-                      key={selectedVideo?.url} 
-                      src={selectedVideo?.url} 
-                      controls 
-                      autoPlay 
-                      playsInline
-                      className="w-full h-full" 
-                      onError={() => setVideoError(true)}
-                    />
+                    selectedVideo && (
+                      <VideoPlayer 
+                        src={selectedVideo.url} 
+                        poster={selectedVideo.thumbnail}
+                        onError={() => setVideoError(true)}
+                      />
+                    )
                   )}
                 </div>
                 <div className="mt-6 px-4 lg:px-0">
