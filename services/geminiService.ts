@@ -1,11 +1,11 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Initialize the GoogleGenAI client with the API key from the environment variable process.env.API_KEY.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-
 export const generateVideoMetadata = async (imageBuffer: string) => {
   try {
+    // Initialize inside the function to avoid top-level ReferenceErrors during module hoisting
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+    
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: {
@@ -45,7 +45,6 @@ export const generateVideoMetadata = async (imageBuffer: string) => {
       },
     });
 
-    // Directly access the .text property of GenerateContentResponse.
     const jsonStr = response.text || '{}';
     return JSON.parse(jsonStr);
   } catch (error) {

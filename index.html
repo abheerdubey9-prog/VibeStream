@@ -9,6 +9,10 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Gun.js for P2P Global Sync -->
     <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+    <script>
+      // Immediate shim for process.env to prevent ESM hoisting crashes
+      window.process = window.process || { env: {} };
+    </script>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
       body {
@@ -19,13 +23,16 @@
       }
       /* Fallback for blank screen */
       #root:empty::after {
-        content: "Loading VibeStream Global Feed...";
+        content: "Initializing Global P2P Feed...";
         display: flex;
         align-items: center;
         justify-content: center;
         height: 100vh;
-        color: #666;
+        color: #444;
         font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
       }
       ::-webkit-scrollbar { width: 8px; }
       ::-webkit-scrollbar-track { background: #0f0f0f; }
@@ -52,7 +59,6 @@
 </head>
 <body>
     <div id="root"></div>
-    <!-- CRITICAL: This script tag starts your app -->
     <script type="module" src="./index.tsx"></script>
 </body>
 </html>
