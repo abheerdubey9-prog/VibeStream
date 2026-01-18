@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Video, ViewMode } from './types';
 import { saveVideoGlobally, subscribeToVideos, removeVideoGlobally } from './services/dbService';
 import { generateVideoMetadata } from './services/geminiService';
+import { storeLocalVideo, getLocalVideo, removeLocalVideo } from './services/storageService';
 import Sidebar from './components/Sidebar';
 import VideoCard from './components/VideoCard';
 
@@ -22,32 +23,47 @@ const App: React.FC = () => {
   const [showDetails, setShowDetails] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Subscribe to P2P network updates and manage local persistence
   useEffect(() => {
     try {
-      subscribeToVideos((video, id) => {
-        setGlobalVideos(prev => {
-          const next = { ...prev };
-          if (video === null) {
+      subscribeToVideos(async (video, id) => {
+        if (video === null) {
+          // Video was deleted from network
+          setGlobalVideos(prev => {
+            const next = { ...prev };
             delete next[id];
-            if (selectedVideo?.id === id) {
-              setViewMode(ViewMode.FEED);
-              setSelectedVideo(null);
+            return next;
+          });
+          if (selectedVideo?.id === id) {
+            setViewMode(ViewMode.FEED);
+            setSelectedVideo(null);
+          }
+          await removeLocalVideo(id);
+        } else {
+          let processedVideo = { ...video };
+          
+          // Rehydration Logic: If it's a local video, try to restore blob from IndexedDB
+          if (video.isLocal) {
+            const localFile = await getLocalVideo(id);
+            if (localFile) {
+              processedVideo.url = URL.createObjectURL(localFile);
             }
-          } else {
+          }
+
+          setGlobalVideos(prev => {
             if (!prev[id]) {
-              setLastSyncedVideo(video.title);
+              setLastSyncedVideo(processedVideo.title);
               setShowNotification(true);
               setTimeout(() => setShowNotification(false), 5000);
             }
-            next[id] = video;
-          }
-          return next;
-        });
+            return { ...prev, [id]: processedVideo };
+          });
+        }
       });
     } catch (e) {
       console.warn("P2P synchronization layer experienced an issue.");
     }
-  }, [selectedVideo]);
+  }, [selectedVideo?.id]);
 
   const videosArray = useMemo(() => {
     const videos = Object.values(globalVideos) as Video[];
@@ -63,34 +79,50 @@ const App: React.FC = () => {
   };
 
   const handleUninstall = async (id: string) => {
-    if (!confirm("Are you sure you want to remove this video from the network?")) return;
+    if (!confirm("Are you sure you want to uninstall this video from the network and your local storage?")) return;
     setIsDeleting(true);
-    await removeVideoGlobally(id);
+    try {
+      await removeVideoGlobally(id);
+      await removeLocalVideo(id);
+    } catch (err) {
+      console.error("Cleanup failed:", err);
+    }
     setIsDeleting(false);
-    setViewMode(ViewMode.FEED);
-    setSelectedVideo(null);
   };
 
-  const processVideoMetadata = async (videoUrl: string, fileName: string, isLocal: boolean = false) => {
+  const processVideoMetadata = async (videoUrl: string, fileName: string, fileBlob?: Blob) => {
     setIsUploading(true);
     setUploadProgress(10);
     
     try {
+      const videoId = Math.random().toString(36).substr(2, 9);
+      
+      // If we have a file, store it permanently in IndexedDB
+      if (fileBlob) {
+        await storeLocalVideo(videoId, fileBlob);
+      }
+
       const videoElement = document.createElement('video');
       videoElement.src = videoUrl;
       videoElement.crossOrigin = "anonymous";
       videoElement.muted = true;
       
-      const videoInfo = await new Promise<{ resolution: string, codec: string }>((resolve) => {
-        videoElement.onloadeddata = () => {
+      const videoInfo = await new Promise<{ resolution: string, duration: string }>((resolve) => {
+        videoElement.onloadedmetadata = () => {
           const res = `${videoElement.videoWidth}x${videoElement.videoHeight}`;
-          const codec = fileName.split('.').pop()?.toUpperCase() || 'MP4';
-          videoElement.currentTime = 1;
-          resolve({ resolution: res, codec });
+          const dur = isFinite(videoElement.duration) 
+            ? `${Math.floor(videoElement.duration / 60)}:${Math.floor(videoElement.duration % 60).toString().padStart(2, '0')}`
+            : '0:00';
+          resolve({ resolution: res, duration: dur });
         };
-        videoElement.onerror = () => resolve({ resolution: 'Unknown', codec: 'Unknown' });
-        setTimeout(() => resolve({ resolution: '1080p', codec: 'MP4' }), 4000);
+        videoElement.onerror = () => resolve({ resolution: 'Unknown', duration: '0:00' });
+        setTimeout(() => resolve({ resolution: '1080p', duration: '0:00' }), 4000);
       });
+
+      // Capture frame for AI analysis
+      setUploadProgress(30);
+      videoElement.currentTime = Math.min(1, videoElement.duration || 0);
+      await new Promise(r => setTimeout(r, 500));
 
       const canvas = document.createElement('canvas');
       canvas.width = 320;
@@ -99,26 +131,24 @@ const App: React.FC = () => {
       ctx?.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
       const thumbnailData = canvas.toDataURL('image/jpeg', 0.5);
 
-      setUploadProgress(40);
+      setUploadProgress(50);
       const metadata = await generateVideoMetadata(thumbnailData);
       setUploadProgress(80);
 
       const newVideo: Video = {
-        id: Math.random().toString(36).substr(2, 9),
+        id: videoId,
         title: metadata.title || fileName,
         description: metadata.description || 'A community shared video.',
         url: videoUrl,
         thumbnail: thumbnailData,
         uploader: `User_${Math.floor(Math.random() * 9999)}`,
-        views: Math.floor(Math.random() * 100),
+        views: 0,
         createdAt: Date.now(),
-        duration: isFinite(videoElement.duration) 
-            ? `${Math.floor(videoElement.duration / 60)}:${Math.floor(videoElement.duration % 60).toString().padStart(2, '0')}`
-            : '0:00',
+        duration: videoInfo.duration,
         category: metadata.category?.toLowerCase() || 'uncategorized',
-        isLocal,
+        isLocal: !!fileBlob,
         resolution: videoInfo.resolution,
-        codec: videoInfo.codec
+        codec: fileName.split('.').pop()?.toUpperCase() || 'MP4'
       };
 
       await saveVideoGlobally(newVideo);
@@ -139,16 +169,16 @@ const App: React.FC = () => {
     }
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
-    processVideoMetadata(url, file.name, true);
+    processVideoMetadata(url, file.name, file);
   };
 
   const handleUrlSubmit = () => {
     if (!publicUrl) return;
-    processVideoMetadata(publicUrl, "External Stream", false);
+    processVideoMetadata(publicUrl, "External Stream");
   };
 
   const filteredVideos = videosArray.filter(v => 
@@ -177,7 +207,7 @@ const App: React.FC = () => {
           <div className="flex items-center bg-[#121212] border border-white/10 rounded-full overflow-hidden focus-within:border-blue-500 transition-all">
             <input 
               type="text" 
-              placeholder="Search synchronized videos..." 
+              placeholder="Search Mesh network..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-transparent px-5 py-2 outline-none text-sm placeholder:text-gray-500"
@@ -191,7 +221,7 @@ const App: React.FC = () => {
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-full text-sm font-bold transition-all shadow-lg shadow-blue-600/20"
           >
             <i className="fa-solid fa-cloud-arrow-up"></i>
-            <span className="hidden sm:inline">Upload</span>
+            <span className="hidden sm:inline">Broadcast</span>
           </button>
         </div>
       </nav>
@@ -202,8 +232,8 @@ const App: React.FC = () => {
             <i className="fa-solid fa-bolt text-white text-sm"></i>
           </div>
           <div className="overflow-hidden">
-            <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-0.5">New Broadcast</p>
-            <p className="text-xs font-bold text-gray-200 line-clamp-1">{lastSyncedVideo} available</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-0.5">Network Update</p>
+            <p className="text-xs font-bold text-gray-200 line-clamp-1">{lastSyncedVideo} joined mesh</p>
           </div>
         </div>
       )}
@@ -212,13 +242,13 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="bg-[#181818] w-full max-w-md rounded-3xl p-8 border border-white/10 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-black">Sync Content</h2>
+              <h2 className="text-2xl font-black tracking-tight">Broadcast Content</h2>
               <button onClick={() => setShowUrlModal(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center"><i className="fa-solid fa-xmark"></i></button>
             </div>
             
             <div className="space-y-6">
               <div>
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Video URL (Public Link)</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Global URL (Visible to Everyone)</label>
                 <input 
                   type="text" 
                   placeholder="https://example.com/video.mp4"
@@ -233,19 +263,20 @@ const App: React.FC = () => {
                 <div className="flex-1 h-px bg-white/5"></div>
               </div>
               <div>
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Local MP4 File</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Local File (Saved on Device)</label>
                 <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/5 rounded-2xl cursor-pointer hover:bg-white/5 transition-all group">
                    <i className="fa-solid fa-file-video text-3xl mb-3 text-gray-600 group-hover:text-blue-500 transition-colors"></i>
-                   <p className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Browse Files</p>
+                   <p className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Select MP4 Video</p>
                    <input type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
                 </label>
+                <p className="text-[10px] text-gray-600 mt-3 italic">* File uploads are persisted in your browser's local storage for seamless playback across refreshes.</p>
               </div>
               <button 
                 onClick={handleUrlSubmit}
                 disabled={!publicUrl}
                 className={`w-full py-4 rounded-2xl font-black transition-all ${publicUrl ? 'bg-blue-600 hover:bg-blue-700 shadow-xl shadow-blue-600/20' : 'bg-white/5 text-gray-600 cursor-not-allowed'}`}
               >
-                BROADCAST TO PEERS
+                BROADCAST TO MESH
               </button>
             </div>
           </div>
@@ -258,7 +289,7 @@ const App: React.FC = () => {
           {isUploading && (
             <div className="fixed bottom-8 right-8 z-[110] bg-[#1a1a1a] border border-white/10 p-5 rounded-2xl shadow-2xl w-80">
               <div className="flex items-center justify-between mb-3 text-blue-500">
-                <span className="text-xs font-black uppercase tracking-widest">AI Categorization...</span>
+                <span className="text-xs font-black uppercase tracking-widest">Analyzing Mesh Payload...</span>
                 <span className="text-xs font-bold">{uploadProgress}%</span>
               </div>
               <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
@@ -278,38 +309,34 @@ const App: React.FC = () => {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-x-5 gap-y-12">
                 {filteredVideos.map(video => (
-                  <div key={video.id} className="relative group">
-                    <VideoCard video={video} onClick={handleVideoSelect} />
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleUninstall(video.id); }}
-                      className="absolute top-2 right-2 p-2 bg-red-600/80 hover:bg-red-600 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-lg"
-                      title="Uninstall Video"
-                    >
-                      <i className="fa-solid fa-trash-can text-xs"></i>
-                    </button>
-                  </div>
+                  <VideoCard 
+                    key={video.id} 
+                    video={video} 
+                    onClick={handleVideoSelect} 
+                    onUninstall={handleUninstall}
+                  />
                 ))}
               </div>
               {filteredVideos.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-48 text-center animate-in fade-in duration-700">
-                  <i className="fa-solid fa-wifi text-4xl text-white/20 mb-6 animate-pulse"></i>
-                  <h2 className="text-2xl font-black mb-2">Connecting to Mesh...</h2>
-                  <p className="text-gray-500 max-w-sm text-sm">Searching for peer-to-peer video broadcasts on the global VibeStream network.</p>
+                  <i className="fa-solid fa-satellite-dish text-4xl text-white/20 mb-6 animate-pulse"></i>
+                  <h2 className="text-2xl font-black mb-2">Syncing with Network...</h2>
+                  <p className="text-gray-500 max-w-sm text-sm">Searching for peer-to-peer broadcasts on the global mesh network.</p>
                 </div>
               )}
             </div>
           ) : (
             <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-8 p-0 lg:p-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
               <div className="flex-1">
-                <div className="aspect-video bg-black relative rounded-none lg:rounded-3xl overflow-hidden shadow-2xl group">
+                <div className="aspect-video bg-black relative rounded-none lg:rounded-3xl overflow-hidden shadow-2xl">
                   {videoError ? (
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-[#1a1a1a]">
                       <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mb-6">
                         <i className="fa-solid fa-circle-exclamation text-3xl text-red-500"></i>
                       </div>
-                      <h3 className="text-xl font-black mb-3 text-white">Playback Error</h3>
+                      <h3 className="text-xl font-black mb-3">Broadcast Unavailable</h3>
                       <p className="text-gray-400 text-sm max-w-md leading-relaxed">
-                        The video broadcast is currently unavailable. This may happen if the source link has expired or the peer node is offline.
+                        The peer node hosting this content is currently offline or the source link has expired. Local mesh broadcasts require the uploader to be active.
                       </p>
                       <button 
                         onClick={() => { setViewMode(ViewMode.FEED); setSelectedVideo(null); }}
@@ -334,77 +361,63 @@ const App: React.FC = () => {
                   <div className="flex justify-between items-start gap-4">
                     <h1 className="text-2xl lg:text-3xl font-black mb-4 leading-tight flex-1">{selectedVideo?.title}</h1>
                     <button 
-                      disabled={isDeleting}
                       onClick={() => selectedVideo && handleUninstall(selectedVideo.id)}
-                      className="px-4 py-2 bg-white/5 hover:bg-red-600/20 text-red-500 border border-red-500/30 rounded-full text-xs font-black transition-all flex items-center gap-2"
+                      className="px-4 py-2 bg-white/5 hover:bg-red-600/20 text-red-500 border border-red-500/20 rounded-full text-[10px] font-black uppercase tracking-widest transition-all"
                     >
-                      <i className="fa-solid fa-trash-can"></i>
-                      {isDeleting ? "Uninstalling..." : "Uninstall"}
+                      Uninstall
                     </button>
                   </div>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden ring-2 ring-white/10">
-                        <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedVideo?.uploader}`} alt="avatar" />
-                      </div>
-                      <div>
-                        <h4 className="font-black text-base">{selectedVideo?.uploader}</h4>
-                        <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest">Network Contributor</p>
-                      </div>
+                  
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center shadow-lg overflow-hidden ring-2 ring-white/10">
+                      <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedVideo?.uploader}`} alt="avatar" />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-base">{selectedVideo?.uploader}</h4>
+                      <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest">Active Node</p>
                     </div>
                   </div>
                   
-                  <div className="space-y-4">
-                    <div className="bg-white/5 rounded-3xl p-6 border border-white/5">
-                      <div className="flex gap-4 font-bold mb-3 text-gray-500 text-xs">
-                        <span>P2P Broadcast</span>
-                        <span>Shared {new Date(selectedVideo?.createdAt || 0).toLocaleDateString()}</span>
-                      </div>
-                      <p className="text-gray-300 leading-relaxed font-medium">{selectedVideo?.description}</p>
+                  <div className="bg-white/5 rounded-3xl p-6 border border-white/5">
+                    <div className="flex gap-4 font-bold mb-3 text-gray-500 text-[10px] uppercase tracking-widest">
+                      <span>{selectedVideo?.isLocal ? 'Mesh Node' : 'Global Source'}</span>
+                      <span>Shared {new Date(selectedVideo?.createdAt || 0).toLocaleDateString()}</span>
                     </div>
+                    <p className="text-gray-300 leading-relaxed font-medium">{selectedVideo?.description}</p>
+                  </div>
 
-                    <div className="bg-[#1a1a1a] border border-white/5 rounded-3xl overflow-hidden">
-                      <button 
-                        onClick={() => setShowDetails(!showDetails)}
-                        className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition-colors"
-                      >
-                        <span className="text-xs font-black uppercase tracking-widest text-gray-400">P2P Metadata</span>
-                        <i className={`fa-solid fa-chevron-down transition-transform duration-300 ${showDetails ? 'rotate-180' : ''}`}></i>
-                      </button>
-                      
-                      <div className={`transition-all duration-300 overflow-hidden ${showDetails ? 'max-h-96' : 'max-h-0'}`}>
-                        <div className="p-6 pt-0 grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5">
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Resolution</p>
-                            <p className="text-sm font-bold text-gray-200">{selectedVideo?.resolution || '1080p (est)'}</p>
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Codec</p>
-                            <p className="text-sm font-bold text-gray-200">{selectedVideo?.codec || 'H.264 / AAC'}</p>
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Node Address</p>
-                            <p className="text-sm font-mono text-gray-400 truncate">{selectedVideo?.id}</p>
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Availability</p>
-                            <p className="text-sm font-bold text-green-500">Global Mesh</p>
-                          </div>
+                  <div className="mt-4 bg-[#1a1a1a] border border-white/5 rounded-3xl overflow-hidden">
+                    <button 
+                      onClick={() => setShowDetails(!showDetails)}
+                      className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition-colors"
+                    >
+                      <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Technical Specs</span>
+                      <i className={`fa-solid fa-chevron-down transition-transform duration-300 ${showDetails ? 'rotate-180' : ''}`}></i>
+                    </button>
+                    {showDetails && (
+                      <div className="p-6 pt-0 grid grid-cols-2 gap-4 border-t border-white/5 animate-in slide-in-from-top-2 duration-200">
+                        <div className="space-y-1">
+                          <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Resolution</p>
+                          <p className="text-sm font-bold">{selectedVideo?.resolution || 'Unknown'}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Codec</p>
+                          <p className="text-sm font-bold">{selectedVideo?.codec || 'MP4'}</p>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               </div>
               <div className="w-full lg:w-[420px] flex flex-col gap-5 px-4 lg:px-0">
-                <h3 className="font-black text-[10px] text-blue-500 uppercase tracking-widest px-1">Network Activity</h3>
+                <h3 className="font-black text-[10px] text-blue-500 uppercase tracking-widest px-1">Discover Mesh</h3>
                 {videosArray.filter(v => v.id !== selectedVideo?.id).slice(0, 10).map(video => (
                   <div key={video.id} className="flex gap-3 group cursor-pointer" onClick={() => handleVideoSelect(video)}>
                     <div className="relative w-44 h-24 flex-shrink-0 bg-[#1a1a1a] rounded-2xl overflow-hidden shadow-xl ring-1 ring-white/5">
                       <img src={video.thumbnail} alt={video.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                       <div className="absolute bottom-2 right-2 bg-black/80 px-1.5 py-0.5 rounded-lg text-[10px] font-black">{video.duration}</div>
                     </div>
-                    <div className="flex flex-col overflow-hidden py-1 justify-center">
+                    <div className="flex flex-col overflow-hidden py-1">
                       <h4 className="text-xs font-bold line-clamp-2 leading-snug group-hover:text-blue-500 transition-colors">{video.title}</h4>
                       <p className="text-[10px] text-gray-500 mt-2 font-black uppercase tracking-tighter">{video.uploader}</p>
                     </div>

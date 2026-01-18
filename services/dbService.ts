@@ -13,7 +13,7 @@ const gun = typeof GunConstructor !== 'undefined'
   : null;
 
 // Namespace for global discovery
-const videoNode = gun ? gun.get('vibestream-global-discovery-v4') : null;
+const videoNode = gun ? gun.get('vibestream-global-discovery-v5') : null;
 
 export const saveVideoGlobally = (video: Video): Promise<void> => {
   return new Promise((resolve) => {
@@ -31,7 +31,7 @@ export const saveVideoGlobally = (video: Video): Promise<void> => {
 export const removeVideoGlobally = (id: string): Promise<void> => {
   return new Promise((resolve) => {
     if (!videoNode) return resolve();
-    // In GunDB, nulling a key effectively deletes it from the current path
+    // Setting a node to null removes it from map subscriptions
     videoNode.get(id).put(null as any, (ack: any) => {
       if (ack.err) console.error("Gun Delete Error:", ack.err);
       resolve();
