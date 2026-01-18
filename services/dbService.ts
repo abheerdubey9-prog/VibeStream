@@ -2,7 +2,6 @@
 import { Video } from '../types';
 
 // Safely initialize Gun from the global window object.
-// Access Gun via window as any to resolve the "Cannot find name 'Gun'" error for the CDN-loaded library.
 const GunConstructor = (window as any).Gun;
 const gun = typeof GunConstructor !== 'undefined' 
   ? GunConstructor([
@@ -29,11 +28,24 @@ export const saveVideoGlobally = (video: Video): Promise<void> => {
   });
 };
 
-export const subscribeToVideos = (callback: (video: Video) => void) => {
+export const removeVideoGlobally = (id: string): Promise<void> => {
+  return new Promise((resolve) => {
+    if (!videoNode) return resolve();
+    // In GunDB, nulling a key effectively deletes it from the current path
+    videoNode.get(id).put(null as any, (ack: any) => {
+      if (ack.err) console.error("Gun Delete Error:", ack.err);
+      resolve();
+    });
+  });
+};
+
+export const subscribeToVideos = (callback: (video: Video | null, id: string) => void) => {
   if (!videoNode) return;
   videoNode.map().on((data: any, id: string) => {
-    if (data && data.title && typeof data.title === 'string') {
-      callback({ ...data, id });
+    if (data === null) {
+      callback(null, id);
+    } else if (data && data.title && typeof data.title === 'string') {
+      callback({ ...data, id }, id);
     }
   });
 };

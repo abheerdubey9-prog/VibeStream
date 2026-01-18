@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Video, ViewMode } from './types';
-import { saveVideoGlobally, subscribeToVideos } from './services/dbService';
+import { saveVideoGlobally, subscribeToVideos, removeVideoGlobally } from './services/dbService';
 import { generateVideoMetadata } from './services/geminiService';
 import Sidebar from './components/Sidebar';
 import VideoCard from './components/VideoCard';
@@ -20,25 +20,34 @@ const App: React.FC = () => {
   const [showNotification, setShowNotification] = useState(false);
   const [videoError, setVideoError] = useState<boolean>(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     try {
-      subscribeToVideos((video) => {
-        if (video && video.id) {
-          setGlobalVideos(prev => {
-            if (!prev[video.id]) {
+      subscribeToVideos((video, id) => {
+        setGlobalVideos(prev => {
+          const next = { ...prev };
+          if (video === null) {
+            delete next[id];
+            if (selectedVideo?.id === id) {
+              setViewMode(ViewMode.FEED);
+              setSelectedVideo(null);
+            }
+          } else {
+            if (!prev[id]) {
               setLastSyncedVideo(video.title);
               setShowNotification(true);
               setTimeout(() => setShowNotification(false), 5000);
             }
-            return { ...prev, [video.id]: video };
-          });
-        }
+            next[id] = video;
+          }
+          return next;
+        });
       });
     } catch (e) {
-      console.warn("P2P connection or subscription failed. Running in standalone mode.");
+      console.warn("P2P synchronization layer experienced an issue.");
     }
-  }, []);
+  }, [selectedVideo]);
 
   const videosArray = useMemo(() => {
     const videos = Object.values(globalVideos) as Video[];
@@ -51,6 +60,15 @@ const App: React.FC = () => {
     setShowDetails(false);
     setViewMode(ViewMode.WATCH);
     window.scrollTo(0, 0);
+  };
+
+  const handleUninstall = async (id: string) => {
+    if (!confirm("Are you sure you want to remove this video from the network?")) return;
+    setIsDeleting(true);
+    await removeVideoGlobally(id);
+    setIsDeleting(false);
+    setViewMode(ViewMode.FEED);
+    setSelectedVideo(null);
   };
 
   const processVideoMetadata = async (videoUrl: string, fileName: string, isLocal: boolean = false) => {
@@ -66,12 +84,12 @@ const App: React.FC = () => {
       const videoInfo = await new Promise<{ resolution: string, codec: string }>((resolve) => {
         videoElement.onloadeddata = () => {
           const res = `${videoElement.videoWidth}x${videoElement.videoHeight}`;
-          const codec = fileName.split('.').pop()?.toUpperCase() || 'H.264/AVC';
+          const codec = fileName.split('.').pop()?.toUpperCase() || 'MP4';
           videoElement.currentTime = 1;
           resolve({ resolution: res, codec });
         };
         videoElement.onerror = () => resolve({ resolution: 'Unknown', codec: 'Unknown' });
-        setTimeout(() => resolve({ resolution: '1080p', codec: 'MP4' }), 3000);
+        setTimeout(() => resolve({ resolution: '1080p', codec: 'MP4' }), 4000);
       });
 
       const canvas = document.createElement('canvas');
@@ -92,7 +110,7 @@ const App: React.FC = () => {
         url: videoUrl,
         thumbnail: thumbnailData,
         uploader: `User_${Math.floor(Math.random() * 9999)}`,
-        views: 0,
+        views: Math.floor(Math.random() * 100),
         createdAt: Date.now(),
         duration: isFinite(videoElement.duration) 
             ? `${Math.floor(videoElement.duration / 60)}:${Math.floor(videoElement.duration % 60).toString().padStart(2, '0')}`
@@ -117,7 +135,7 @@ const App: React.FC = () => {
     } catch (err) {
       setIsUploading(false);
       console.error(err);
-      alert("Processing failed. Please try a different video link.");
+      alert("Something went wrong during video processing.");
     }
   };
 
@@ -130,7 +148,7 @@ const App: React.FC = () => {
 
   const handleUrlSubmit = () => {
     if (!publicUrl) return;
-    processVideoMetadata(publicUrl, "Shared Stream", false);
+    processVideoMetadata(publicUrl, "External Stream", false);
   };
 
   const filteredVideos = videosArray.filter(v => 
@@ -141,10 +159,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-white selection:bg-blue-500/30">
-      <div className="h-0.5 w-full fixed top-0 z-[60] overflow-hidden bg-transparent">
-        <div className="h-full bg-blue-500 animate-[pulse_2s_infinite] shadow-[0_0_8px_rgba(59,130,246,0.8)]"></div>
-      </div>
-
       <nav className="h-16 bg-[#0f0f0f]/95 backdrop-blur-md sticky top-0 z-50 flex items-center justify-between px-4 border-b border-white/5">
         <div className="flex items-center gap-4">
           <button className="p-2 hover:bg-white/10 rounded-full"><i className="fa-solid fa-bars text-lg"></i></button>
@@ -163,7 +177,7 @@ const App: React.FC = () => {
           <div className="flex items-center bg-[#121212] border border-white/10 rounded-full overflow-hidden focus-within:border-blue-500 transition-all">
             <input 
               type="text" 
-              placeholder="Search synced videos..." 
+              placeholder="Search synchronized videos..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-transparent px-5 py-2 outline-none text-sm placeholder:text-gray-500"
@@ -176,8 +190,8 @@ const App: React.FC = () => {
             onClick={() => setShowUrlModal(true)}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-full text-sm font-bold transition-all shadow-lg shadow-blue-600/20"
           >
-            <i className="fa-solid fa-plus"></i>
-            <span className="hidden sm:inline">Share</span>
+            <i className="fa-solid fa-cloud-arrow-up"></i>
+            <span className="hidden sm:inline">Upload</span>
           </button>
         </div>
       </nav>
@@ -185,11 +199,11 @@ const App: React.FC = () => {
       {showNotification && (
         <div className="fixed bottom-6 left-6 z-[200] bg-[#1a1a1a] border border-blue-500/30 p-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-left-10 duration-500 max-w-xs">
           <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
-            <i className="fa-solid fa-satellite-dish text-white text-sm"></i>
+            <i className="fa-solid fa-bolt text-white text-sm"></i>
           </div>
           <div className="overflow-hidden">
-            <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-0.5">Network Update</p>
-            <p className="text-xs font-bold text-gray-200 line-clamp-1">{lastSyncedVideo} shared!</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-0.5">New Broadcast</p>
+            <p className="text-xs font-bold text-gray-200 line-clamp-1">{lastSyncedVideo} available</p>
           </div>
         </div>
       )}
@@ -198,16 +212,16 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="bg-[#181818] w-full max-w-md rounded-3xl p-8 border border-white/10 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-black">Share with Network</h2>
+              <h2 className="text-2xl font-black">Sync Content</h2>
               <button onClick={() => setShowUrlModal(false)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center"><i className="fa-solid fa-xmark"></i></button>
             </div>
             
             <div className="space-y-6">
               <div>
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Option A: Link (Visible to All)</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Video URL (Public Link)</label>
                 <input 
                   type="text" 
-                  placeholder="https://.../video.mp4"
+                  placeholder="https://example.com/video.mp4"
                   className="w-full bg-[#0f0f0f] border border-white/10 rounded-2xl px-5 py-4 outline-none focus:border-blue-500 transition-all text-sm"
                   value={publicUrl}
                   onChange={(e) => setPublicUrl(e.target.value)}
@@ -219,10 +233,10 @@ const App: React.FC = () => {
                 <div className="flex-1 h-px bg-white/5"></div>
               </div>
               <div>
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Option B: Local File (Preview Only)</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Local MP4 File</label>
                 <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/5 rounded-2xl cursor-pointer hover:bg-white/5 transition-all group">
-                   <i className="fa-solid fa-film text-3xl mb-3 text-gray-600 group-hover:text-blue-500 transition-colors"></i>
-                   <p className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Choose MP4</p>
+                   <i className="fa-solid fa-file-video text-3xl mb-3 text-gray-600 group-hover:text-blue-500 transition-colors"></i>
+                   <p className="text-xs font-bold text-gray-500 group-hover:text-gray-300">Browse Files</p>
                    <input type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
                 </label>
               </div>
@@ -231,7 +245,7 @@ const App: React.FC = () => {
                 disabled={!publicUrl}
                 className={`w-full py-4 rounded-2xl font-black transition-all ${publicUrl ? 'bg-blue-600 hover:bg-blue-700 shadow-xl shadow-blue-600/20' : 'bg-white/5 text-gray-600 cursor-not-allowed'}`}
               >
-                SYNC GLOBALLY
+                BROADCAST TO PEERS
               </button>
             </div>
           </div>
@@ -263,13 +277,24 @@ const App: React.FC = () => {
                 ))}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-x-5 gap-y-12">
-                {filteredVideos.map(video => <VideoCard key={video.id} video={video} onClick={handleVideoSelect} />)}
+                {filteredVideos.map(video => (
+                  <div key={video.id} className="relative group">
+                    <VideoCard video={video} onClick={handleVideoSelect} />
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleUninstall(video.id); }}
+                      className="absolute top-2 right-2 p-2 bg-red-600/80 hover:bg-red-600 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-lg"
+                      title="Uninstall Video"
+                    >
+                      <i className="fa-solid fa-trash-can text-xs"></i>
+                    </button>
+                  </div>
+                ))}
               </div>
               {filteredVideos.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-48 text-center animate-in fade-in duration-700">
-                  <i className="fa-solid fa-satellite text-4xl text-white/20 mb-6"></i>
-                  <h2 className="text-2xl font-black mb-2">Network is Quiet</h2>
-                  <p className="text-gray-500 max-w-sm text-sm">Waiting for decentralized peers to broadcast video signals.</p>
+                  <i className="fa-solid fa-wifi text-4xl text-white/20 mb-6 animate-pulse"></i>
+                  <h2 className="text-2xl font-black mb-2">Connecting to Mesh...</h2>
+                  <p className="text-gray-500 max-w-sm text-sm">Searching for peer-to-peer video broadcasts on the global VibeStream network.</p>
                 </div>
               )}
             </div>
@@ -282,11 +307,9 @@ const App: React.FC = () => {
                       <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mb-6">
                         <i className="fa-solid fa-circle-exclamation text-3xl text-red-500"></i>
                       </div>
-                      <h3 className="text-xl font-black mb-3 text-white">Video Source Unavailable</h3>
+                      <h3 className="text-xl font-black mb-3 text-white">Playback Error</h3>
                       <p className="text-gray-400 text-sm max-w-md leading-relaxed">
-                        {selectedVideo?.isLocal 
-                          ? "This video was shared as a 'Local File' from another device. For security, browsers don't allow sharing local files directly. Try sharing using a direct 'Global Link' (URL) instead."
-                          : "The video link could not be loaded. It might be private, blocked, or not a direct MP4 file."}
+                        The video broadcast is currently unavailable. This may happen if the source link has expired or the peer node is offline.
                       </p>
                       <button 
                         onClick={() => { setViewMode(ViewMode.FEED); setSelectedVideo(null); }}
@@ -306,22 +329,27 @@ const App: React.FC = () => {
                       onError={() => setVideoError(true)}
                     />
                   )}
-                  {selectedVideo?.isLocal && !videoError && (
-                    <div className="absolute top-4 left-4 bg-orange-600/90 text-[10px] font-black px-2 py-1 rounded shadow-lg backdrop-blur-sm">
-                      SESSION LOCAL PREVIEW
-                    </div>
-                  )}
                 </div>
                 <div className="mt-6 px-4 lg:px-0">
-                  <h1 className="text-2xl lg:text-3xl font-black mb-4 leading-tight">{selectedVideo?.title}</h1>
+                  <div className="flex justify-between items-start gap-4">
+                    <h1 className="text-2xl lg:text-3xl font-black mb-4 leading-tight flex-1">{selectedVideo?.title}</h1>
+                    <button 
+                      disabled={isDeleting}
+                      onClick={() => selectedVideo && handleUninstall(selectedVideo.id)}
+                      className="px-4 py-2 bg-white/5 hover:bg-red-600/20 text-red-500 border border-red-500/30 rounded-full text-xs font-black transition-all flex items-center gap-2"
+                    >
+                      <i className="fa-solid fa-trash-can"></i>
+                      {isDeleting ? "Uninstalling..." : "Uninstall"}
+                    </button>
+                  </div>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8">
                     <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden">
+                      <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20 overflow-hidden ring-2 ring-white/10">
                         <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${selectedVideo?.uploader}`} alt="avatar" />
                       </div>
                       <div>
                         <h4 className="font-black text-base">{selectedVideo?.uploader}</h4>
-                        <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest">P2P Broadcaster</p>
+                        <p className="text-[10px] text-blue-500 font-black uppercase tracking-widest">Network Contributor</p>
                       </div>
                     </div>
                   </div>
@@ -329,18 +357,18 @@ const App: React.FC = () => {
                   <div className="space-y-4">
                     <div className="bg-white/5 rounded-3xl p-6 border border-white/5">
                       <div className="flex gap-4 font-bold mb-3 text-gray-500 text-xs">
-                        <span>Live Sync Mode</span>
+                        <span>P2P Broadcast</span>
                         <span>Shared {new Date(selectedVideo?.createdAt || 0).toLocaleDateString()}</span>
                       </div>
                       <p className="text-gray-300 leading-relaxed font-medium">{selectedVideo?.description}</p>
                     </div>
 
-                    <div className="bg-[#1a1a1a] border border-white/5 rounded-3xl overflow-hidden transition-all duration-300">
+                    <div className="bg-[#1a1a1a] border border-white/5 rounded-3xl overflow-hidden">
                       <button 
                         onClick={() => setShowDetails(!showDetails)}
                         className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition-colors"
                       >
-                        <span className="text-xs font-black uppercase tracking-widest text-gray-400">Technical Details</span>
+                        <span className="text-xs font-black uppercase tracking-widest text-gray-400">P2P Metadata</span>
                         <i className={`fa-solid fa-chevron-down transition-transform duration-300 ${showDetails ? 'rotate-180' : ''}`}></i>
                       </button>
                       
@@ -348,19 +376,19 @@ const App: React.FC = () => {
                         <div className="p-6 pt-0 grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5">
                           <div className="space-y-1">
                             <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Resolution</p>
-                            <p className="text-sm font-bold text-gray-200">{selectedVideo?.resolution || 'Auto Detected'}</p>
+                            <p className="text-sm font-bold text-gray-200">{selectedVideo?.resolution || '1080p (est)'}</p>
                           </div>
                           <div className="space-y-1">
-                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Container / Codec</p>
-                            <p className="text-sm font-bold text-gray-200">{selectedVideo?.codec || 'MP4 / H.264'}</p>
+                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Codec</p>
+                            <p className="text-sm font-bold text-gray-200">{selectedVideo?.codec || 'H.264 / AAC'}</p>
                           </div>
                           <div className="space-y-1">
-                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Broadcast ID</p>
+                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Node Address</p>
                             <p className="text-sm font-mono text-gray-400 truncate">{selectedVideo?.id}</p>
                           </div>
                           <div className="space-y-1">
-                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Sync Timestamp</p>
-                            <p className="text-sm font-bold text-gray-200">{new Date(selectedVideo?.createdAt || 0).toLocaleString()}</p>
+                            <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Availability</p>
+                            <p className="text-sm font-bold text-green-500">Global Mesh</p>
                           </div>
                         </div>
                       </div>
@@ -369,8 +397,8 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div className="w-full lg:w-[420px] flex flex-col gap-5 px-4 lg:px-0">
-                <h3 className="font-black text-[10px] text-blue-500 uppercase tracking-widest px-1">Global Activity</h3>
-                {videosArray.filter(v => v.id !== selectedVideo?.id).slice(0, 12).map(video => (
+                <h3 className="font-black text-[10px] text-blue-500 uppercase tracking-widest px-1">Network Activity</h3>
+                {videosArray.filter(v => v.id !== selectedVideo?.id).slice(0, 10).map(video => (
                   <div key={video.id} className="flex gap-3 group cursor-pointer" onClick={() => handleVideoSelect(video)}>
                     <div className="relative w-44 h-24 flex-shrink-0 bg-[#1a1a1a] rounded-2xl overflow-hidden shadow-xl ring-1 ring-white/5">
                       <img src={video.thumbnail} alt={video.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />

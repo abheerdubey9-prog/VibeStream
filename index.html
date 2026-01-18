@@ -10,38 +10,49 @@
     <!-- Gun.js for P2P Global Sync -->
     <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
     <script>
-      // Immediate shim for process.env to prevent ESM hoisting crashes
-      window.process = window.process || { env: {} };
+      // Immediate shim for process.env to prevent ESM hoisting crashes on deployment
+      if (!window.process) window.process = { env: {} };
+      if (!window.process.env) window.process.env = {};
     </script>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
       body {
         font-family: 'Inter', sans-serif;
         background-color: #0f0f0f;
         color: #ffffff;
         margin: 0;
+        overflow-x: hidden;
       }
-      /* Fallback for blank screen */
+      /* Fallback for blank screen while React mounts */
       #root:empty::after {
-        content: "Initializing Global P2P Feed...";
+        content: "Initializing VibeStream Network...";
         display: flex;
         align-items: center;
         justify-content: center;
         height: 100vh;
         color: #444;
-        font-size: 14px;
-        font-weight: 600;
-        letter-spacing: 0.05em;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.15em;
         text-transform: uppercase;
       }
-      ::-webkit-scrollbar { width: 8px; }
-      ::-webkit-scrollbar-track { background: #0f0f0f; }
-      ::-webkit-scrollbar-thumb { background: #3f3f3f; border-radius: 10px; }
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #222; border-radius: 10px; }
+      ::-webkit-scrollbar-thumb:hover { background: #333; }
+      
       .line-clamp-2 {
         display: -webkit-box;
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
+      }
+      .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+      }
+      .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
       }
     </style>
     <script type="importmap">
