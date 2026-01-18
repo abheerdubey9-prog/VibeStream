@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Video, ViewMode } from './types.ts';
-import { saveVideoGlobally, subscribeToVideos } from './services/dbService.ts';
-import { generateVideoMetadata } from './services/geminiService.ts';
-import Sidebar from './components/Sidebar.tsx';
-import VideoCard from './components/VideoCard.tsx';
+import { Video, ViewMode } from './types';
+import { saveVideoGlobally, subscribeToVideos } from './services/dbService';
+import { generateVideoMetadata } from './services/geminiService';
+import Sidebar from './components/Sidebar';
+import VideoCard from './components/VideoCard';
 
 const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.FEED);
@@ -36,14 +36,13 @@ const App: React.FC = () => {
         }
       });
     } catch (e) {
-      console.error("P2P connection failed.");
+      console.warn("P2P connection or subscription failed. Running in standalone mode.");
     }
   }, []);
 
   const videosArray = useMemo(() => {
-    // Cast Object.values results to Video[] to fix the 'unknown' property error during sorting.
     const videos = Object.values(globalVideos) as Video[];
-    return videos.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return videos.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
   }, [globalVideos]);
 
   const handleVideoSelect = (video: Video) => {
@@ -67,14 +66,12 @@ const App: React.FC = () => {
       const videoInfo = await new Promise<{ resolution: string, codec: string }>((resolve) => {
         videoElement.onloadeddata = () => {
           const res = `${videoElement.videoWidth}x${videoElement.videoHeight}`;
-          // Browser doesn't provide codec easily via HTMLVideoElement, so we infer from file extension or fallback
           const codec = fileName.split('.').pop()?.toUpperCase() || 'H.264/AVC';
           videoElement.currentTime = 1;
           resolve({ resolution: res, codec });
         };
-        videoElement.onseeked = () => {}; 
         videoElement.onerror = () => resolve({ resolution: 'Unknown', codec: 'Unknown' });
-        setTimeout(() => resolve({ resolution: '1920x1080', codec: 'H.264' }), 4000);
+        setTimeout(() => resolve({ resolution: '1080p', codec: 'MP4' }), 3000);
       });
 
       const canvas = document.createElement('canvas');
@@ -119,7 +116,8 @@ const App: React.FC = () => {
 
     } catch (err) {
       setIsUploading(false);
-      alert("Processing failed. Please try a direct MP4 link.");
+      console.error(err);
+      alert("Processing failed. Please try a different video link.");
     }
   };
 
@@ -137,8 +135,8 @@ const App: React.FC = () => {
 
   const filteredVideos = videosArray.filter(v => 
     (activeCategory === 'all' || v.category === activeCategory) &&
-    (v.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-     v.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    (v.title?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+     v.description?.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   return (
