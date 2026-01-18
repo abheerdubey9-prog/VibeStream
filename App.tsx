@@ -26,6 +26,10 @@ const App: React.FC = () => {
   const [showDetails, setShowDetails] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // State for editing video details before broadcast
+  const [pendingVideo, setPendingVideo] = useState<Video | null>(null);
+  const [pendingFileBlob, setPendingFileBlob] = useState<Blob | null>(null);
+
   // Check for existing session on load
   useEffect(() => {
     const savedUser = localStorage.getItem('vibestream_user');
@@ -131,10 +135,7 @@ const App: React.FC = () => {
     
     try {
       const videoId = Math.random().toString(36).substr(2, 9);
-      if (fileBlob) {
-        await storeLocalVideo(videoId, fileBlob);
-      }
-
+      
       const videoElement = document.createElement('video');
       videoElement.src = videoUrl;
       videoElement.crossOrigin = "anonymous";
@@ -165,7 +166,7 @@ const App: React.FC = () => {
 
       setUploadProgress(50);
       const metadata = await generateVideoMetadata(thumbnailData);
-      setUploadProgress(80);
+      setUploadProgress(100);
 
       const newVideo: Video = {
         id: videoId,
@@ -183,21 +184,43 @@ const App: React.FC = () => {
         codec: fileName.split('.').pop()?.toUpperCase() || 'MP4'
       };
 
-      await saveVideoGlobally(newVideo);
-      setUploadProgress(100);
-      
-      setTimeout(() => {
-        setIsUploading(false);
-        setUploadProgress(0);
-        setShowUrlModal(false);
-        setPublicUrl('');
-        handleVideoSelect(newVideo);
-      }, 500);
+      setPendingVideo(newVideo);
+      setPendingFileBlob(fileBlob || null);
+      setIsUploading(false);
+      setUploadProgress(0);
+      setShowUrlModal(false);
+      setPublicUrl('');
 
     } catch (err) {
       setIsUploading(false);
       console.error(err);
       alert("Video processing failed.");
+    }
+  };
+
+  const confirmBroadcast = async () => {
+    if (!pendingVideo) return;
+    
+    setIsUploading(true);
+    setUploadProgress(10);
+    
+    try {
+      if (pendingFileBlob) {
+        await storeLocalVideo(pendingVideo.id, pendingFileBlob);
+      }
+      setUploadProgress(50);
+      await saveVideoGlobally(pendingVideo);
+      setUploadProgress(100);
+      
+      const finalVideo = pendingVideo;
+      setPendingVideo(null);
+      setPendingFileBlob(null);
+      setIsUploading(false);
+      setUploadProgress(0);
+      handleVideoSelect(finalVideo);
+    } catch (error) {
+      setIsUploading(false);
+      alert("Failed to broadcast video.");
     }
   };
 
@@ -222,7 +245,6 @@ const App: React.FC = () => {
   if (viewMode === ViewMode.AUTH) {
     return (
       <div className="min-h-screen bg-[#050505] flex items-center justify-center p-6 relative overflow-hidden">
-        {/* Background blobs for aesthetics */}
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/20 blur-[120px] rounded-full"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-600/20 blur-[120px] rounded-full"></div>
 
@@ -256,12 +278,6 @@ const App: React.FC = () => {
                 </>
               )}
             </button>
-
-            <div className="mt-8 pt-8 border-t border-white/5">
-              <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">
-                Protected by Peer-to-Peer Encryption
-              </p>
-            </div>
           </div>
         </div>
       </div>
@@ -320,6 +336,86 @@ const App: React.FC = () => {
         </div>
       </nav>
 
+      {/* Pending Video Editor Modal */}
+      {pendingVideo && (
+        <div className="fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-[#181818] w-full max-w-xl rounded-[40px] p-8 border border-white/10 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight">Finalize Broadcast</h2>
+                <p className="text-xs text-blue-500 font-black uppercase tracking-widest mt-1">Review AI Suggestions</p>
+              </div>
+              <button 
+                onClick={() => { setPendingVideo(null); setPendingFileBlob(null); }} 
+                className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors"
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+            
+            <div className="space-y-8">
+              <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black ring-1 ring-white/10 shadow-inner">
+                <img src={pendingVideo.thumbnail} alt="preview" className="w-full h-full object-cover" />
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Video Title</label>
+                  <input 
+                    type="text" 
+                    className="w-full bg-[#0f0f0f] border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-blue-500 transition-all text-sm font-bold"
+                    value={pendingVideo.title}
+                    onChange={(e) => setPendingVideo({ ...pendingVideo, title: e.target.value })}
+                    placeholder="Enter a catchy title..."
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Description</label>
+                  <textarea 
+                    rows={3}
+                    className="w-full bg-[#0f0f0f] border border-white/10 rounded-2xl px-6 py-4 outline-none focus:border-blue-500 transition-all text-sm font-medium resize-none"
+                    value={pendingVideo.description}
+                    onChange={(e) => setPendingVideo({ ...pendingVideo, description: e.target.value })}
+                    placeholder="What's this video about?"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Category</label>
+                    <select 
+                      className="w-full bg-[#0f0f0f] border border-white/10 rounded-2xl px-4 py-4 outline-none focus:border-blue-500 transition-all text-sm font-bold appearance-none cursor-pointer"
+                      value={pendingVideo.category}
+                      onChange={(e) => setPendingVideo({ ...pendingVideo, category: e.target.value })}
+                    >
+                      {['creative', 'music', 'gaming', 'news', 'learning', 'uncategorized'].map(cat => (
+                        <option key={cat} value={cat}>{cat.charAt(0).toUpperCase() + cat.slice(1)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Network Type</label>
+                    <div className="h-[52px] bg-white/5 border border-white/5 rounded-2xl flex items-center px-6">
+                      <span className="text-xs font-black uppercase tracking-widest text-blue-500">
+                        {pendingVideo.isLocal ? 'Mesh Node' : 'Global Source'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button 
+                onClick={confirmBroadcast}
+                className="w-full py-5 rounded-[24px] bg-blue-600 hover:bg-blue-700 font-black text-sm tracking-widest uppercase transition-all shadow-xl shadow-blue-600/20 active:scale-[0.98]"
+              >
+                BROADCAST TO PEERS
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showNotification && (
         <div className="fixed bottom-6 left-6 z-[200] bg-[#1a1a1a] border border-blue-500/30 p-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-in slide-in-from-left-10 duration-500 max-w-xs">
           <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
@@ -369,7 +465,7 @@ const App: React.FC = () => {
                 disabled={!publicUrl}
                 className={`w-full py-4 rounded-2xl font-black transition-all ${publicUrl ? 'bg-blue-600 hover:bg-blue-700 shadow-xl shadow-blue-600/20' : 'bg-white/5 text-gray-600 cursor-not-allowed'}`}
               >
-                BROADCAST TO MESH
+                ANALYZE & BROADCAST
               </button>
             </div>
           </div>
@@ -380,9 +476,9 @@ const App: React.FC = () => {
         {viewMode === ViewMode.FEED && <Sidebar activeCategory={activeCategory} onCategorySelect={setActiveCategory} />}
         <main className={`flex-1 ${viewMode === ViewMode.FEED ? 'lg:ml-64 p-4 lg:p-8' : 'w-full'}`}>
           {isUploading && (
-            <div className="fixed bottom-8 right-8 z-[110] bg-[#1a1a1a] border border-white/10 p-5 rounded-2xl shadow-2xl w-80">
+            <div className="fixed bottom-8 right-8 z-[200] bg-[#1a1a1a] border border-white/10 p-5 rounded-2xl shadow-2xl w-80">
               <div className="flex items-center justify-between mb-3 text-blue-500">
-                <span className="text-xs font-black uppercase tracking-widest">Analyzing Mesh Payload...</span>
+                <span className="text-xs font-black uppercase tracking-widest">Processing Data...</span>
                 <span className="text-xs font-bold">{uploadProgress}%</span>
               </div>
               <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
